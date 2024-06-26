@@ -1,64 +1,72 @@
 import express from "express";
 import bodyParser from "body-parser";
 import nodemailer from "nodemailer";
+import Bull, { Job } from "bull";
 
 const app = express();
 
 app.use(bodyParser.json());
 
+const emailQueue = new Bull("email", {
+  redis: "localhost:6379",
+});
+
+type EmailType = {
+  from: string;
+  to: string;
+  subject: string;
+  text: string;
+};
+
+const sendNewEmail = async (email: EmailType) => {
+  emailQueue.add({ email : "test email account goes here..."});
+};
+
+const processEmailQueue = async (job: Job) => {
+  // Use a test account as this is a tutorial
+  const testAccount = await nodemailer.createTestAccount();
+
+  const transporter = nodemailer.createTransport({
+    host: "smtp.ethereal.email",
+    port: 587,
+    secure: false,
+    auth: {
+      user: testAccount.user,
+      pass: testAccount.pass,
+    },
+    tls: {
+      rejectUnauthorized: false,
+    },
+  });
+
+  const { from, to, subject, text } = job.data;
+
+  console.log("Sending mail to %s", to);
+
+  let info = await transporter.sendMail({
+    from,
+    to,
+    subject,
+    text,
+    html: `<strong>${text}</strong>`,
+  });
+
+  console.log("Message sent: %s", info.messageId);
+  console.log("Preview URL: %s", nodemailer.getTestMessageUrl(info));
+};
+
+emailQueue.process(processEmailQueue);
+
 app.post("/send-email", async (req, res) => {
   const { from, to, subject, text } = req.body;
 
-  // Log the incoming request body
-  console.log("Request Body:", req.body);
+  await sendNewEmail({ from, to, subject, text });
 
-  // Validate the request body
-  if (!from || !to || !subject || !text) {
-    return res.status(400).json({
-      error: "Missing required fields: from, to, subject, text",
-    });
-  }
+  console.log("Added to queue");
 
-  try {
-    // Use a test account as this is a tutorial
-    const testAccount = await nodemailer.createTestAccount();
-
-    const transporter = nodemailer.createTransport({
-      host: "smtp.ethereal.email",
-      port: 587,
-      secure: false,
-      auth: {
-        user: testAccount.user,
-        pass: testAccount.pass,
-      },
-      tls: {
-        rejectUnauthorized: false,
-      },
-    });
-
-    console.log("Sending mail to %s", to);
-
-    let info = await transporter.sendMail({
-      from,
-      to,
-      subject,
-      text,
-      html: `<strong>${text}</strong>`,
-    });
-
-    console.log("Message sent: %s", info.messageId);
-    console.log("Preview URL: %s", nodemailer.getTestMessageUrl(info));
-
-    res.json({
-      message: "Email Sent",
-      previewUrl: nodemailer.getTestMessageUrl(info), // Optional: return preview URL
-    });
-  } catch (error) {
-    console.error("Error sending email:", error);
-    res.status(500).json({
-      error: "Failed to send email",
-    });
-  }
+  res.json({
+    message: "Email Sent",
+  });
 });
 
 app.listen(4300, () => {
